@@ -17,3 +17,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python3 tests/test_fleetcheck.py
       - run: python3 tests/test_drift.py
+      - run: python3 tests/test_openclaw.py

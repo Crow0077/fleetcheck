@@ -12,25 +12,28 @@ The difference: **dashboards report topology. fleetcheck reports behavior.** A j
 pip install fleetcheck
 ```
 
-Or run it directly:
+Or from source:
 
 ```bash
-python3 fleetcheck.py audit
+git clone https://github.com/Crow0077/fleetcheck
+cd fleetcheck && pip install .
 ```
 
-## What it does
+## Commands
 
 ```bash
 fleetcheck audit              # scorecard + ranked findings
 fleetcheck audit --json       # machine-readable
 fleetcheck audit --md         # markdown report
 fleetcheck cost               # per-job token spend and waste
-fleetcheck snapshot           # save state for drift detection
-fleetcheck drift              # what changed since the last snapshot
+fleetcheck snapshot           # record state for drift detection
+fleetcheck history            # score over time
+fleetcheck watch              # alert on regressions since last snapshot
+fleetcheck drift              # what changed in jobs/skills
 fleetcheck explain --finding <id>
 ```
 
-Exit code is non-zero when critical or high findings exist, so it works in CI.
+Exit code is non-zero when findings at or above `--fail-on` (default `high`) exist, so it works in CI.
 
 ## What it catches
 
@@ -41,7 +44,7 @@ Exit code is non-zero when critical or high findings exist, so it works in CI.
 | **stale** | Daily job whose last output is 14 days old |
 | **orphan** | Output directory for a job that no longer exists |
 | **broken** | Job references a script that isn't on disk |
-| **cost** | Job carrying 100KB of context every run, 92% of it a skill it doesn't need |
+| **cost** | Job burning tokens on fires that deliver nothing |
 | **dormant** | Skill with no description — cannot be routed reliably |
 | **exposure** | Service bound to `0.0.0.0` with no consumer |
 | **clutter** | Completed one-shot jobs still sitting in the schedule |
@@ -58,13 +61,30 @@ TOTAL: 261,036,373 tokens, $188.73
   919e4631bf47       77 fires    76,907,399 tokens  $   16.25  (silent: 1)
 ```
 
-It flags three kinds of waste:
+Three waste signals:
 
 - **silent fires** — a job that burns tokens and delivers nothing
 - **context bloat** — 1,000,000 prompt tokens for 1,400 output tokens (720:1)
 - **concentration** — one job accounting for 61% of the whole bill
 
-Prices are a default table. Override with `--prices my_prices.json`.
+Prices are a default table. Override with `--prices my_prices.json`. These are derived from token counts, not from a provider invoice.
+
+## Drift and regression alerting
+
+```bash
+fleetcheck snapshot
+# ... a job breaks ...
+fleetcheck watch
+```
+
+```
+status: regression
+score: 80 -> 45 (-35)
+REGRESSIONS
+  CRITICAL  Job 'always-fails' has failed 4 runs in a row
+```
+
+`fleetcheck history` shows the score over time. `watch` exits non-zero on regression, so you can schedule it.
 
 ## Supported harnesses
 
@@ -80,14 +100,23 @@ Everything runs locally against files on your machine. No network calls, no tele
 
 ## Fleet health score
 
-Score starts at 100 and is reduced by finding severity: critical −25, high −10, medium −4, low −1.
+Starts at 100, reduced by severity: critical −25, high −10, medium −4, low −1.
 
-A score of 52 means the fleet is functional but has real rot. That is normal for anyone running agents for more than a few months.
+A score of 40 means the fleet is functional but has real rot. That is normal for anyone running agents for more than a few months.
 
-## Roadmap
+## Tests
 
-- **Pro tier** ($19/mo): drift history over time, alerting on regressions, multi-host fleet reports, scheduled audits, CSV export.
-- Free tier stays local and unlimited. Pro is history + alerting + fleet dashboards.
+```bash
+python3 tests/test_fleetcheck.py   # 9 synthetic defects, 0 false positives
+python3 tests/test_drift.py        # regression detection loop
+```
+
+## Pricing
+
+- **Free**: the full CLI, local, unlimited. Stays free.
+- **Pro** ($19/mo, coming soon): hosted drift history across multiple machines, alerting to Slack/Telegram/email, fleet dashboards, CSV export.
+
+The free tier is not a trial of the core feature. The core feature is free. Pro is history, alerting and multi-host.
 
 ## License
 

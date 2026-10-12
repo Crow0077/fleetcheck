@@ -8,11 +8,7 @@ The difference: **dashboards report topology. fleetcheck reports behavior.** A j
 
 ## Install
 
-```bash
-pip install fleetcheck
-```
-
-Or from source:
+Not on PyPI yet. Install from source:
 
 ```bash
 git clone https://github.com/Crow0077/fleetcheck
@@ -110,6 +106,12 @@ A score of 40 means the fleet is functional but has real rot. That is normal for
 python3 tests/test_fleetcheck.py   # 9 synthetic defects, 0 false positives
 python3 tests/test_drift.py        # regression detection loop
 ```
+
+## Status
+
+- Public repo, CI green (3 test suites, Python 3.9–3.14)
+- Not yet on PyPI — `pip install fleetcheck` does not work until it is published
+- No billing yet; Pro tier is planned, not available
 
 ## Pricing
 

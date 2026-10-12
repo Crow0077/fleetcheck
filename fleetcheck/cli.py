@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .cost import analyze_cost, DEFAULT_PRICES
+from .history import record, watch, load_history, score
 
 VERSION = "0.1.0"
 
@@ -420,6 +421,8 @@ def analyze(root):
 
     summary = {
         "jobs": len(jobs),
+        "job_ids": sorted(j.get("id") for j in jobs),
+        "skill_names": sorted(s["name"] for s in skills),
         "context_chars_total": sum(w["chars"] for w in weights.values()),
         "skills": len(skills),
         "plugins": len(plugins),
@@ -439,32 +442,15 @@ def analyze(root):
 # Snapshot / drift
 # --------------------------------------------------------------------------
 
-def snapshot_path(root):
-    return root / "fleetcheck" / "snapshot.json"
-
-
-def take_snapshot(root, state):
-    sp = snapshot_path(root)
-    sp.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "taken_at": now_utc().isoformat(),
-        "job_ids": sorted(j.get("id") for j in state["jobs"]),
-        "skill_names": sorted(s["name"] for s in state["skills"]),
-        "output_dirs": sorted(state["outputs"].keys()),
-    }
-    sp.write_text(json.dumps(payload, indent=2))
-    return sp
-
-
 def compute_drift(root, state):
-    sp = snapshot_path(root)
-    if not sp.exists():
+    history = load_history(root, limit=1)
+    if not history:
         return None
-    prev = json.loads(sp.read_text())
+    prev = history[0]
     cur_jobs = set(j.get("id") for j in state["jobs"])
-    prev_jobs = set(prev["job_ids"])
+    prev_jobs = set(prev["summary"].get("job_ids", []))
     cur_skills = set(s["name"] for s in state["skills"])
-    prev_skills = set(prev["skill_names"])
+    prev_skills = set(prev["summary"].get("skill_names", []))
     return {
         "previous_snapshot": prev["taken_at"],
         "jobs_added": sorted(cur_jobs - prev_jobs),
@@ -482,12 +468,7 @@ def render_scorecard(summary, findings):
     lines = []
     lines.append(f"fleetcheck {VERSION}")
     lines.append("")
-    score = 100
-    weight = {"critical": 25, "high": 10, "medium": 4, "low": 1, "info": 0}
-    for f in findings:
-        score -= weight[f["severity"]]
-    score = max(0, score)
-    lines.append(f"FLEET HEALTH SCORE: {score}/100")
+    lines.append(f"FLEET HEALTH SCORE: {score(summary, findings)}/100")
     lines.append("")
     lines.append(f"  jobs: {summary['jobs']}  skills: {summary['skills']}  "
                  f"plugins: {summary['plugins']}  listeners: {summary['listeners']}")
@@ -528,7 +509,7 @@ def render_md(summary, findings):
 def main():
     ap = argparse.ArgumentParser(description="Behavioral audit for AI agent fleets.")
     ap.add_argument("command", nargs="?", default="audit",
-                    choices=["audit", "snapshot", "drift", "explain", "cost"])
+                    choices=["audit", "snapshot", "drift", "explain", "cost", "history", "watch"])
     ap.add_argument("--root", help="Agent state directory (default: auto-detect ~/.hermes or ~/.openclaw)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--md", action="store_true")
@@ -577,11 +558,6 @@ def main():
 
     summary, findings, state = analyze(root)
 
-    if args.command == "snapshot":
-        sp = take_snapshot(root, state)
-        print(f"snapshot written to {sp}")
-        return
-
     if args.command == "drift":
         drift = compute_drift(root, state)
         if drift is None:
@@ -589,6 +565,43 @@ def main():
             return
         print(json.dumps(drift, indent=2))
         return
+
+    if args.command in ("snapshot", "history", "watch"):
+        if args.command == "snapshot":
+            path, entry = record(root, summary, findings)
+            print(f"snapshot written to {path} (score {entry['score']})")
+            sys.exit(0)
+
+        if args.command == "history":
+            entries = load_history(root)
+            if not entries:
+                print("No history. Run `fleetcheck snapshot` to start a baseline.")
+                sys.exit(0)
+            if args.json:
+                print(json.dumps(entries, indent=2))
+            else:
+                print(f"{len(entries)} snapshots")
+                for e in entries:
+                    print(f"  {e['taken_at'][:19]}  score {e['score']:3}  findings {len(e['findings'])}")
+            sys.exit(0)
+
+        # watch
+        result = watch(root, summary, findings)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"status: {result['status']}")
+            if result.get("delta") is not None:
+                print(f"score: {result['previous_score']} -> {result['current_score']} ({result['delta']:+d})")
+            if result.get("regressions"):
+                print("REGRESSIONS")
+                for f in result["regressions"]:
+                    print(f"  {f['severity'].upper():8}  {f['title']}")
+            if result.get("resolved_findings"):
+                print("RESOLVED")
+                for f in result["resolved_findings"]:
+                    print(f"  {f['title']}")
+        sys.exit(1 if result.get("regressions") else 0)
 
     if args.command == "explain":
         if not args.finding:
